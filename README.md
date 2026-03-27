@@ -1,6 +1,10 @@
 # Oliver's Drum Kit
 
-A browser-based drum kit built with HTML, CSS, and vanilla JavaScript — made for my grandson Oliver.
+![A Drum Kit for Oliver](public/img/og-image-1200x630.png)
+
+A browser-based drum kit built with HTML, CSS, and JavaScript, made as a fun interactive toy for my grandson Oliver.
+
+Live at [drum-kit-canvas.philipnewborough.co.uk](https://drum-kit-canvas.philipnewborough.co.uk)
 
 All rendering is done on a single HTML `<canvas>` element using a `requestAnimationFrame` loop, replacing earlier DOM-based animations for better performance. Audio playback is handled by [Howler.js](https://howlerjs.com/).
 
