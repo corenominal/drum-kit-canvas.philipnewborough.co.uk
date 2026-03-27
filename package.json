@@ -1,0 +1,9 @@
+{
+  "name": "drum-kit",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "cache-bust": "node cache-bust.js"
+  }
+}

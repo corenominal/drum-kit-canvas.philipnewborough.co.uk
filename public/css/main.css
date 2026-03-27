@@ -1,0 +1,459 @@
+:root {
+    touch-action: pan-x pan-y;
+    height: 100%;
+}
+
+@font-face {
+  font-family: "sniglet";
+  src: url("/fonts/sniglet.woff2") format("woff2"),
+       url("/fonts/sniglet.woff") format("woff");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0021-002C, U+002E-0039, U+003B-007E;
+}
+
+body {
+    background: #6e40c9; /* fallback while canvas initialises */
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+}
+
+/* ── Full-screen canvas ─────────────────────────────────────────────────── */
+#drumkit-canvas {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    touch-action: none;
+    display: block;
+}
+
+/* ── Fireflies (used on splash screen) ─────────────────────────────────── */
+.firefly {
+    position: fixed;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 99999;
+    animation: firefly-float var(--ff-dur, 3s) ease-in-out forwards;
+    box-shadow: 0 0 8px 4px var(--ff-color, #F1FA8C);
+}
+
+@keyframes firefly-float {
+    0%   { opacity: 0;   transform: translate(0, 0) scale(0.8); }
+    15%  { opacity: 0.9; transform: translate(calc(var(--dx) * 0.15), calc(var(--dy) * 0.15)) scale(1); }
+    30%  { opacity: 0.1; transform: translate(calc(var(--dx) * 0.3),  calc(var(--dy) * 0.3)); }
+    50%  { opacity: 0.9; transform: translate(calc(var(--dx) * 0.5),  calc(var(--dy) * 0.5)); }
+    65%  { opacity: 0.1; transform: translate(calc(var(--dx) * 0.65), calc(var(--dy) * 0.65)); }
+    82%  { opacity: 0.9; transform: translate(calc(var(--dx) * 0.82), calc(var(--dy) * 0.82)) scale(1); }
+    100% { opacity: 0;   transform: translate(var(--dx), var(--dy)) scale(0.4); }
+}
+
+/* ── Splash splash-button burst particles (DOM, used once only) ─────────── */
+.sparkle {
+    position: fixed;
+    width: 48px;
+    height: 48px;
+    pointer-events: none;
+    z-index: 99999;
+    animation: sparkle-burst 0.6s ease-out forwards;
+}
+
+.sparkle-circle  { clip-path: circle(50%); }
+.sparkle-diamond { clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); }
+.sparkle-triangle { clip-path: polygon(50% 0%, 100% 100%, 0% 100%); }
+.sparkle-star    { clip-path: polygon(50% 0%, 61.8% 33.8%, 97.6% 34.5%, 69% 56.2%, 79.4% 90.5%, 50% 70%, 20.6% 90.5%, 31% 56.2%, 2.4% 34.5%, 38.2% 33.8%); }
+
+@keyframes sparkle-burst {
+    0%   { opacity: 1; transform: translate(0, 0) scale(1); }
+    100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.3); }
+}
+
+/* ── COMBO! flash overlay ───────────────────────────────────────────────── */
+#combo-flash {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 99998;
+    background: radial-gradient(ellipse at center, rgba(255,255,255,0.45) 0%, rgba(255,255,255,0) 70%);
+    animation: combo-flash-anim 0.45s ease-out forwards;
+}
+
+@keyframes combo-flash-anim {
+    0%   { opacity: 1; transform: scale(0.4); }
+    35%  { opacity: 0.85; transform: scale(1.2); }
+    100% { opacity: 0; transform: scale(1.8); }
+}
+
+/* ── COMBO! text ────────────────────────────────────────────────────────── */
+#combo-text {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 99999;
+    display: flex;
+    gap: 0.08em;
+}
+
+.combo-letter {
+    display: inline-block;
+    font-family: 'sniglet', 'Arial Black', 'Impact', sans-serif;
+    font-size: clamp(4.5rem, 18vw, 12rem);
+    font-weight: 900;
+    line-height: 1;
+    -webkit-text-stroke: 3px rgb(255, 0, 212);
+    text-shadow:
+        0 0 20px currentColor,
+        0 0 55px currentColor,
+        0 0 110px currentColor,
+        5px 5px 0 rgba(0, 0, 0, 0.55);
+    animation: combo-letter-anim 1.7s ease-out both;
+    animation-delay: var(--letter-delay, 0s);
+}
+
+@keyframes combo-letter-anim {
+    0%   { opacity: 0; transform: scale(0) rotate(var(--spin, 0deg)); filter: brightness(3); }
+    18%  { opacity: 1; transform: scale(2.4) rotate(0deg);            filter: brightness(2.2); }
+    32%  { opacity: 1; transform: scale(0.85) rotate(0deg);           filter: brightness(1.6); }
+    46%  { opacity: 1; transform: scale(1.15) rotate(0deg);           filter: brightness(1.4); }
+    60%  { opacity: 1; transform: scale(1) rotate(0deg);              filter: brightness(1.2); }
+    78%  { opacity: 1; transform: scale(1) rotate(0deg);              filter: brightness(1); }
+    100% { opacity: 0; transform: translate(var(--ex, 0px), var(--ey, 0px)) scale(0.05) rotate(var(--er, 0deg)); filter: brightness(0.4); }
+}
+
+@media (orientation: portrait) {
+    #combo-text {
+        flex-direction: column;
+        align-items: center;
+        gap: 0.04em;
+    }
+
+    .combo-letter {
+        font-size: clamp(2.5rem, 12vh, 8rem);
+    }
+}
+
+/* ── Cache version badge ────────────────────────────────────────────────── */
+#cache-version {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    text-align: center;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.25);
+    pointer-events: none;
+    z-index: 1;
+    font-family: monospace;
+    letter-spacing: 0.05em;
+}
+
+/* ── Splash landscape layout ────────────────────────────────────────────── */
+@media (orientation: landscape) {
+    #splash-content {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        grid-template-rows: auto auto auto;
+        align-items: center;
+        text-align: left;
+        width: fit-content;
+        max-width: 94vw;
+        max-height: 90vh;
+        padding: 0.75rem 1.25rem;
+        column-gap: 1.2rem;
+        box-sizing: border-box;
+        white-space: nowrap;
+        width: 60% !important;
+    }
+
+    #splash-drum {
+        grid-column: 1;
+        grid-row: 1 / span 3;
+        width: clamp(70px, 14vh, 120px);
+        animation: none;
+        align-self: center;
+    }
+
+    #splash-content h1 {
+        grid-column: 2;
+        grid-row: 1;
+        font-size: clamp(1.2rem, 4vh, 1.8rem);
+        margin: 0 0 0.5rem;
+    }
+
+    #splash-btn-wrapper {
+        grid-column: 2;
+        grid-row: 2;
+        align-self: start;
+        justify-self: center;
+    }
+
+    #splash-btn {
+        font-size: 1rem;
+        padding: 0.6rem 2rem;
+    }
+
+    #splash-help-link {
+        grid-column: 2;
+        grid-row: 3;
+        align-self: start;
+        margin-top: 0.4rem;
+    }
+}
+
+/* ── Splash Modal ───────────────────────────────────────────────────────── */
+#splash-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(6px);
+
+    &.exploding {
+        animation: modal-backdrop-fade 0.55s ease-out forwards;
+
+        #splash-content {
+            animation: content-explode 0.55s ease-out forwards;
+        }
+    }
+}
+
+#splash-content {
+    background: linear-gradient(135deg, #bd93f9 0%, #ff79c6 30%, #ffb86c 60%, #50fa7b 80%, #8be9fd 100%);
+    background-size: 300% 300%;
+    animation: gradient-shift 3s ease infinite;
+    border-radius: 28px;
+    padding: 2.5rem 2rem;
+    text-align: center;
+    box-shadow: 0 0 60px rgba(189, 147, 249, 0.8), 0 0 120px rgba(255, 121, 198, 0.4), 0 20px 60px rgba(0, 0, 0, 0.5);
+    max-width: 94vw;
+    width: 88%;
+}
+
+#splash-drum {
+    width: 170px;
+    height: auto;
+    animation: splash-bounce 1.2s ease-in-out infinite;
+    filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.35));
+}
+
+#splash-content h1 {
+    font-family: 'sniglet', 'Arial Rounded MT Bold', 'Arial Black', Arial, sans-serif;
+    font-size: clamp(1.6rem, 5vw, 2.2rem);
+    color: #ffffff;
+    text-shadow: 3px 3px 0 rgba(80, 0, 120, 0.4), 0 2px 12px rgba(0, 0, 0, 0.3);
+    margin: 1.2rem 0 1.5rem;
+    line-height: 1.25;
+    font-weight: 900;
+}
+
+#splash-btn-wrapper {
+    position: relative;
+    display: inline-block;
+    border-radius: 54px;
+    padding: 4px;
+    overflow: hidden;
+    transition: transform 0.15s, box-shadow 0.15s;
+    animation: btn-glow 1.4s ease-in-out infinite alternate;
+
+    &::before {
+        content: '';
+        position: absolute;
+        width: 200%;
+        height: 200%;
+        top: -50%;
+        left: -50%;
+        background: conic-gradient(from 0deg at 50% 50%, #ff2d78, #ffb86c, #f1fa8c, #50fa7b, #8be9fd, #bd93f9, #ff79c6, #ff2d78);
+        animation: spin 2s linear infinite;
+    }
+
+    &:hover, &:active {
+        transform: scale(1.08);
+    }
+}
+
+#splash-btn {
+    position: relative;
+    background: linear-gradient(135deg, #ff2d78, #ffb86c, #f1fa8c);
+    color: #5a0030;
+    border: none;
+    padding: 0.85rem 2.8rem;
+    font-size: 1.3rem;
+    font-weight: 900;
+    border-radius: 50px;
+    cursor: pointer;
+    font-family: 'sniglet', 'Arial Rounded MT Bold', 'Arial Black', Arial, sans-serif;
+    letter-spacing: 0.03em;
+    text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.4);
+    display: block;
+}
+
+@keyframes splash-bounce {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-10px) scale(1.06); }
+}
+
+@keyframes btn-glow {
+    from { box-shadow: 0 6px 25px rgba(255, 45, 120, 0.5), 0 0 0 0 rgba(255, 255, 255, 0); }
+    to   { box-shadow: 0 6px 35px rgba(255, 45, 120, 0.8), 0 0 20px 4px rgba(255, 255, 255, 0.35); }
+}
+
+@keyframes modal-backdrop-fade {
+    0%   { opacity: 1; }
+    100% { opacity: 0; pointer-events: none; }
+}
+
+@keyframes content-explode {
+    0%   { transform: scale(1);    opacity: 1; }
+    25%  { transform: scale(1.18); opacity: 1; }
+    100% { transform: scale(4.5);  opacity: 0; }
+}
+
+@keyframes gradient-shift {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+/* ── Help link ──────────────────────────────────────────────────────────── */
+#splash-help-link {
+    margin-top: 0.9rem;
+}
+
+#help-btn {
+    background: transparent;
+    border: 2px solid rgba(255, 255, 255, 0.55);
+    color: rgba(255, 255, 255, 0.9);
+    padding: 0.4rem 1.4rem;
+    font-size: 0.85rem;
+    font-weight: 700;
+    border-radius: 50px;
+    cursor: pointer;
+    font-family: 'sniglet', 'Arial Rounded MT Bold', 'Arial Black', Arial, sans-serif;
+    transition: border-color 0.15s, background 0.15s;
+
+    &:hover, &:active {
+        background: rgba(255, 255, 255, 0.15);
+        border-color: rgba(255, 255, 255, 0.9);
+    }
+}
+
+/* ── Help Modal ─────────────────────────────────────────────────────────── */
+#help-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 10001;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(6px);
+}
+
+#help-content {
+    background: linear-gradient(160deg, #1e0840 0%, #2d1b69 50%, #1e0840 100%);
+    border: 1px solid rgba(189, 147, 249, 0.35);
+    border-radius: 28px;
+    padding: 2rem 1.75rem;
+    text-align: left;
+    box-shadow: 0 0 60px rgba(189, 147, 249, 0.45), 0 20px 60px rgba(0, 0, 0, 0.55);
+    max-width: 420px;
+    width: 88%;
+    max-height: 80vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(189, 147, 249, 0.4) transparent;
+    box-sizing: border-box;
+}
+
+#help-content h2 {
+    font-family: 'sniglet', 'Arial Rounded MT Bold', 'Arial Black', Arial, sans-serif;
+    font-size: clamp(1.4rem, 5vw, 2rem);
+    color: #ffffff;
+    text-shadow: 2px 2px 0 rgba(80, 0, 120, 0.5);
+    margin: 0 0 1.1rem;
+    text-align: center;
+    font-weight: 900;
+}
+
+.help-section {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 16px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.help-section h3 {
+    font-family: 'sniglet', 'Arial Rounded MT Bold', 'Arial Black', Arial, sans-serif;
+    font-size: 0.95rem;
+    font-weight: 900;
+    color: #f1fa8c;
+    margin: 0 0 0.45rem;
+    text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.4);
+}
+
+.help-section p {
+    font-family: 'Arial Rounded MT Bold', 'Arial Black', Arial, sans-serif;
+    font-size: 0.875rem;
+    color: rgba(255, 255, 255, 0.88);
+    margin: 0.3rem 0 0;
+    line-height: 1.5;
+}
+
+.help-section p strong {
+    color: #ff79c6;
+}
+
+.help-section p.help-note {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.78rem;
+    margin-top: 0.5rem;
+}
+
+#help-back-btn {
+    display: block;
+    margin: 1.2rem auto 0;
+    background: linear-gradient(135deg, #bd93f9, #ff79c6);
+    color: #ffffff;
+    border: none;
+    padding: 0.75rem 2.5rem;
+    font-size: 1.05rem;
+    font-weight: 900;
+    border-radius: 50px;
+    cursor: pointer;
+    font-family: 'sniglet', 'Arial Rounded MT Bold', 'Arial Black', Arial, sans-serif;
+    text-shadow: 1px 1px 0 rgba(80, 0, 120, 0.4);
+    transition: transform 0.15s;
+
+    &:hover, &:active {
+        transform: scale(1.06);
+    }
+}
+
+@media (orientation: landscape) {
+    #help-content {
+        max-height: 85vh;
+        padding: 1.2rem 1.5rem;
+    }
+
+    #help-content h2 {
+        font-size: clamp(1.1rem, 4vh, 1.6rem);
+        margin-bottom: 0.7rem;
+    }
+
+    .help-section {
+        padding: 0.6rem 0.9rem;
+        margin-bottom: 0.5rem;
+    }
+}

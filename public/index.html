@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>A Drum Kit for Oliver</title>
+<!-- Icons & Theme Colours -->
+<link rel="icon" type="image/png" sizes="32x32" href="/img/icon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/img/icon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#B48AF3">
+<meta name="theme-color" content="#B48AF3">
+<!-- Opengraph start -->
+<meta property="og:title" content="A Drum Kit for Oliver" />
+<meta property="og:description" content="A HTML, CSS and JavaScript drum kit for my grandson Oliver." />
+<meta property="og:type" content="website" />
+<meta property="og:image" content="/img/og-image-1200x630.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<!-- Opengraph end -->
+<!-- Stylesheets -->
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/main.css?v=10cbc2ee">
+<!-- JavaScript -->
+<script defer src="js/vendor/howler.js"></script>
+<script defer src="js/main.js?v=993c40cb"></script>
+<!-- Service Worker registration -->
+<script>
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js').then(registration => {
+                // When the page becomes visible again (e.g. PWA resumed from background),
+                // check for a newer SW so updates aren't missed between sessions.
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible') {
+                        registration.update();
+                    }
+                });
+            });
+        });
+        // When a new SW takes control (after an update), reload to get fresh assets.
+        // The firstSW guard prevents a reload on the very first install.
+        const firstSW = !navigator.serviceWorker.controller;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!firstSW) {
+                window.location.reload();
+            }
+        });
+    }
+</script>
+</head>
+<body>
+    <canvas id="drumkit-canvas"></canvas>
+
+    <div id="splash-modal">
+        <div id="splash-content">
+            <img src="img/bass.svg" alt="Bass drum" id="splash-drum">
+            <h1>Welcome to<br>Oliver's Drum Kit</h1>
+            <div id="splash-btn-wrapper"><button id="splash-btn">Let's Play!</button></div>
+            <div id="splash-help-link"><button id="help-btn">How to Play</button></div>
+        </div>
+    </div>
+    <div id="help-modal">
+        <div id="help-content">
+            <h2>How to Play</h2>
+            <div class="help-section">
+                <h3>&#x1F941; Tap to Play</h3>
+                <p>Tap any instrument to play it!</p>
+            </div>
+            <div class="help-section">
+                <h3>&#x1F501; Looping</h3>
+                <p>Press and <strong>hold</strong> any instrument for half a second to start it looping automatically. Hold again to stop. Each instrument loops at its own speed &mdash; try layering a few together to build a beat!</p>
+            </div>
+            <div class="help-section">
+                <h3>&#x26A1; Combos</h3>
+                <p>Hit the <strong>same drum 3 times</strong> quickly to trigger a solo!</p>
+                <p>Alternate between <strong>two drums</strong> in an A&thinsp;&rarr;&thinsp;B&thinsp;&rarr;&thinsp;A&thinsp;&rarr;&thinsp;B pattern to trigger a duo solo!</p>
+                <p>Hit <strong>all 6 instruments</strong> at least once to trigger the classic drum solo!</p>
+                <p class="help-note">Combos are disabled while any loop is running.</p>
+            </div>
+            <button id="help-back-btn">&#x2190; Back</button>
+        </div>
+    </div>
+
+    <div id="cache-version"></div>
+
+    <script>
+        const colors = ['#BD93F9','#FF79C6','#F1FA8C','#FFB86C','#50FA7B','#8BE9FD','#ffffff','#ff2d78'];
+        const fireflyColors = ['#F1FA8C','#c8ffaa','#50FA7B','#FFB86C','#ffffc0','#aaffaa','#ffffff'];
+
+        // Firefly effect while the welcome modal is visible
+        function spawnFirefly() {
+            const p = document.createElement('span');
+            p.className = 'firefly';
+            const x = Math.random() * window.innerWidth;
+            const y = Math.random() * window.innerHeight;
+            const angle = Math.random() * 2 * Math.PI;
+            const dist = 30 + Math.random() * 70;
+            const size = 4 + Math.random() * 4;
+            const color = fireflyColors[Math.floor(Math.random() * fireflyColors.length)];
+            const dur = (2 + Math.random() * 2.5).toFixed(2);
+            p.style.cssText = `left:${x - size / 2}px;top:${y - size / 2}px;width:${size}px;height:${size}px;background:${color};`;
+            p.style.setProperty('--dx', Math.cos(angle) * dist + 'px');
+            p.style.setProperty('--dy', Math.sin(angle) * dist + 'px');
+            p.style.setProperty('--ff-color', color);
+            p.style.setProperty('--ff-dur', dur + 's');
+            document.body.appendChild(p);
+            p.addEventListener('animationend', () => p.remove(), { once: true });
+        }
+
+        let splashSparkleTimer;
+        function scheduleSplashSparkle() {
+            splashSparkleTimer = setTimeout(function () {
+                spawnFirefly();
+                scheduleSplashSparkle();
+            }, 200 + Math.random() * 400);
+        }
+        scheduleSplashSparkle();
+
+        document.getElementById('help-btn').addEventListener('click', function () {
+            document.getElementById('splash-modal').style.visibility = 'hidden';
+            const helpModal = document.getElementById('help-modal');
+            helpModal.style.display = 'flex';
+        });
+
+        document.getElementById('help-back-btn').addEventListener('click', function () {
+            document.getElementById('help-modal').style.display = 'none';
+            document.getElementById('splash-modal').style.visibility = '';
+        });
+
+        document.getElementById('splash-btn').addEventListener('click', function () {
+            if (window.playSplashSolo) window.playSplashSolo();
+            const modal = document.getElementById('splash-modal');
+            const content = document.getElementById('splash-content');
+            modal.classList.add('exploding');
+            // Burst particles from button centre
+            const btn = document.getElementById('splash-btn');
+            const r = btn.getBoundingClientRect();
+            const cx = r.left + r.width / 2;
+            const cy = r.top + r.height / 2;
+            for (let i = 0; i < 28; i++) {
+                const p = document.createElement('span');
+                p.className = 'sparkle';
+                const angle = (i / 28) * 2 * Math.PI;
+                const dist = 80 + Math.random() * 180;
+                const shapes = ['sparkle-circle', 'sparkle-diamond', 'sparkle-triangle', 'sparkle-star'];
+                p.classList.add(shapes[i % shapes.length]);
+                p.style.cssText = `left:${cx - 14}px;top:${cy - 14}px;background:${colors[i % colors.length]};width:${10 + Math.random() * 20}px;height:${10 + Math.random() * 20}px;`;
+                p.style.setProperty('--dx', Math.cos(angle) * dist + 'px');
+                p.style.setProperty('--dy', Math.sin(angle) * dist + 'px');
+                document.body.appendChild(p);
+                p.addEventListener('animationend', () => p.remove(), { once: true });
+            }
+            content.addEventListener('animationend', function () {
+                modal.style.display = 'none';
+            }, { once: true });
+        });
+
+        // Display cache version
+        if ('caches' in window) {
+            caches.keys().then(function (keys) {
+                const key = keys.find(function (k) { return k.startsWith('drum-kit'); });
+                if (key) {
+                    const el = document.getElementById('cache-version');
+                    if (el) el.textContent = key;
+                }
+            });
+        }
+    </script>
+</body>
+</html>
