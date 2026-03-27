@@ -153,6 +153,7 @@
         sounds['tiger'] = new Howl({ src: ['./audio/tiger.mp3'] });
         sounds['moo'] = new Howl({ src: ['./audio/moo.mp3'] });
         sounds['lion'] = new Howl({ src: ['./audio/lion.mp3'] });
+        sounds['oliver'] = new Howl({ src: ['./audio/oliver.mp3'] });
     }
 
     function playSound(name) {
@@ -608,6 +609,7 @@
         },
         bass: {
             duration: 5000,
+            endSfx: { sound: 'oliver', delay: 3800 },
             hits: [
                 [   0, 'bass'    ], [ 300, 'bass'    ], [ 300, 'floortom'],
                 [ 600, 'bass'    ], [ 900, 'bass'    ], [ 900, 'hihat'   ],
