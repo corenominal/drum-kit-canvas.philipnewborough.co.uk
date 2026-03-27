@@ -93,6 +93,57 @@
     // ─── Audio ────────────────────────────────────────────────────────────────
     var sounds = {};
 
+    // ─── Reverb ───────────────────────────────────────────────────────────────
+    var reverbEnabled     = false;
+    var reverbInitialised = false;
+    var reverbWetGain     = null;
+
+    function buildImpulseResponse(audioCtx) {
+        var duration   = 2.5;
+        var decay      = 3.0;
+        var length     = Math.ceil(audioCtx.sampleRate * duration);
+        var buffer     = audioCtx.createBuffer(2, length, audioCtx.sampleRate);
+        for (var c = 0; c < 2; c++) {
+            var ch = buffer.getChannelData(c);
+            for (var i = 0; i < length; i++) {
+                ch[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+            }
+        }
+        return buffer;
+    }
+
+    function initReverbGraph() {
+        if (reverbInitialised) return;
+        var audioCtx = Howler.ctx;
+        if (!audioCtx) return;
+        var convolver = audioCtx.createConvolver();
+        convolver.buffer = buildImpulseResponse(audioCtx);
+        reverbWetGain = audioCtx.createGain();
+        reverbWetGain.gain.value = 0;
+        // Rewire: masterGain → dry (destination) + masterGain → convolver → wet → destination
+        Howler.masterGain.disconnect();
+        Howler.masterGain.connect(audioCtx.destination);
+        Howler.masterGain.connect(convolver);
+        convolver.connect(reverbWetGain);
+        reverbWetGain.connect(audioCtx.destination);
+        reverbInitialised = true;
+        // Apply current state in case toggle was pressed before first sound
+        if (reverbEnabled) reverbWetGain.gain.value = 0.35;
+    }
+
+    function setReverb(enabled) {
+        reverbEnabled = enabled;
+        if (reverbInitialised) {
+            reverbWetGain.gain.setTargetAtTime(
+                enabled ? 0.35 : 0,
+                Howler.ctx.currentTime,
+                0.05
+            );
+        }
+        var btn = document.getElementById('reverb-btn');
+        if (btn) btn.classList.toggle('reverb-on', enabled);
+    }
+
     function initAudio() {
         INSTRUMENTS.forEach(function (name) {
             sounds[name] = new Howl({ src: ['./audio/' + name + '.mp3'] });
@@ -105,6 +156,7 @@
     }
 
     function playSound(name) {
+        if (!reverbInitialised) initReverbGraph();
         if (sounds[name]) sounds[name].play();
     }
 
@@ -946,6 +998,10 @@
     document.getElementById('bpm-up').addEventListener('click', function (e) {
         e.stopPropagation();
         setBpm(bpm + 10);
+    });
+    document.getElementById('reverb-btn').addEventListener('click', function (e) {
+        e.stopPropagation();
+        setReverb(!reverbEnabled);
     });
 
     loadImages(function () {

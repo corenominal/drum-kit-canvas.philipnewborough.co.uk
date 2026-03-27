@@ -21,10 +21,10 @@
 <!-- Opengraph end -->
 <!-- Stylesheets -->
 <link rel="stylesheet" href="css/reset.css">
-<link rel="stylesheet" href="css/main.css?v=5982fd9c">
+<link rel="stylesheet" href="css/main.css?v=c95a1f77">
 <!-- JavaScript -->
 <script defer src="js/vendor/howler.js"></script>
-<script defer src="js/main.js?v=3c5a8c7b"></script>
+<script defer src="js/main.js?v=c62877ce"></script>
 <!-- Service Worker registration -->
 <script>
     if ('serviceWorker' in navigator) {
@@ -88,6 +88,8 @@
         <span><span id="bpm-display">120</span> <span class="bpm-label">BPM</span></span>
         <button id="bpm-up" aria-label="Increase BPM">&#x2B;</button>
     </div>
+
+    <button id="reverb-btn" aria-label="Toggle reverb" aria-pressed="false">&#x1F300; Reverb</button>
 
     <div id="cache-version"></div>
 
@@ -160,6 +162,7 @@
             }
             content.addEventListener('animationend', function () {
                 modal.style.display = 'none';
+                document.getElementById('reverb-btn').classList.add('reverb-show');
             }, { once: true });
         });
 
