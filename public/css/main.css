@@ -150,6 +150,73 @@ body {
     letter-spacing: 0.05em;
 }
 
+/* ── BPM Control ────────────────────────────────────────────────────────── */
+#bpm-control {
+    position: fixed;
+    bottom: 12px;
+    left: 12px;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 50px;
+    padding: 4px 8px 4px 6px;
+    user-select: none;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(6px);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+#bpm-control.bpm-visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+}
+
+#bpm-control button {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 1.1rem;
+    font-weight: 900;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+    padding: 0;
+    line-height: 1;
+    touch-action: manipulation;
+
+    &:hover, &:active {
+        background: rgba(255, 255, 255, 0.2);
+    }
+}
+
+#bpm-display {
+    font-family: 'sniglet', 'Arial Rounded MT Bold', 'Arial Black', Arial, sans-serif;
+    font-size: 0.9rem;
+    font-weight: 900;
+    color: #f1fa8c;
+    min-width: 2em;
+    text-align: right;
+    display: inline-block;
+}
+
+.bpm-label {
+    font-size: 0.62rem;
+    color: rgba(255, 255, 255, 0.5);
+    font-family: monospace;
+    letter-spacing: 0.05em;
+}
+
 /* ── Splash landscape layout ────────────────────────────────────────────── */
 @media (orientation: landscape) {
     #splash-content {

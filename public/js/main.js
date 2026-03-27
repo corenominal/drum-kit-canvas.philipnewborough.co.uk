@@ -308,6 +308,9 @@
     // all instruments stay locked to the same rhythmic grid.
     var masterTickCount = 0;
     var masterTimer     = null;
+    var bpm             = 120;
+    var BPM_MIN         = 60;
+    var BPM_MAX         = 200;
 
     function masterTickFn() {
         // Evaluate before incrementing so tick 0 is a downbeat for all instruments.
@@ -324,13 +327,23 @@
     function startMasterClock() {
         if (masterTimer) return;
         masterTickCount = 0;
-        masterTimer = setInterval(masterTickFn, 250);
+        masterTimer = setInterval(masterTickFn, Math.round(30000 / bpm));
     }
 
     function stopMasterClock() {
         if (masterTimer) {
             clearInterval(masterTimer);
             masterTimer = null;
+        }
+    }
+
+    function setBpm(newBpm) {
+        bpm = Math.max(BPM_MIN, Math.min(BPM_MAX, newBpm));
+        var display = document.getElementById('bpm-display');
+        if (display) display.textContent = bpm;
+        if (masterTimer) {
+            clearInterval(masterTimer);
+            masterTimer = setInterval(masterTickFn, Math.round(30000 / bpm));
         }
     }
 
@@ -383,6 +396,13 @@
         setupHoldTimer(event.pointerId, name);
     });
 
+    function updateBpmVisibility() {
+        var el = document.getElementById('bpm-control');
+        if (!el) return;
+        var hasLoop = Object.keys(activeLoops).length > 0;
+        el.classList.toggle('bpm-visible', hasLoop);
+    }
+
     function setupHoldTimer(pointerId, name) {
         var holdTimer = setTimeout(function () {
             if (activeLoops[name]) {
@@ -394,6 +414,7 @@
                 istate[name].looping = true;
                 startMasterClock();
             }
+            updateBpmVisibility();
         }, 500);
         activePointers[pointerId] = { instrument: name, holdTimer: holdTimer };
     }
@@ -917,6 +938,15 @@
     initAudio();
 
     window.addEventListener('resize', resizeCanvas);
+
+    document.getElementById('bpm-down').addEventListener('click', function (e) {
+        e.stopPropagation();
+        setBpm(bpm - 10);
+    });
+    document.getElementById('bpm-up').addEventListener('click', function (e) {
+        e.stopPropagation();
+        setBpm(bpm + 10);
+    });
 
     loadImages(function () {
         requestAnimationFrame(frame);
