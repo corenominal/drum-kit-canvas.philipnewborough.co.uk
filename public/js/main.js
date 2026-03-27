@@ -16,14 +16,14 @@
     // ─── Instrument list ──────────────────────────────────────────────────────
     const INSTRUMENTS = ['crash', 'tom', 'hihat', 'snare', 'bass', 'floortom'];
 
-    // Loop intervals (ms) per instrument — same as original
-    const LOOP_CONFIG = {
-        crash:    2000,
-        hihat:    250,
-        tom:      750,
-        snare:    1000,
-        bass:     500,
-        floortom: 1500,
+    // Ticks between hits per instrument (1 tick = 250 ms = 8th note at 120 BPM)
+    const LOOP_TICKS = {
+        crash:    8,  // whole note    (2 000 ms)
+        hihat:    1,  // 8th note      (  250 ms)
+        tom:      3,  // dotted quarter(  750 ms)
+        snare:    4,  // half note     (1 000 ms)
+        bass:     2,  // quarter note  (  500 ms)
+        floortom: 6,  // dotted half   (1 500 ms)
     };
 
     // Instruments that spin vs pulse (mirrors original CSS classes)
@@ -303,6 +303,37 @@
     var activeLoops = {};
     window._drumKitActiveLoops = activeLoops;
 
+    // ─── Master loop clock ────────────────────────────────────────────────────
+    // One shared 8th-note tick (250 ms at 120 BPM) drives every active loop so
+    // all instruments stay locked to the same rhythmic grid.
+    var masterTickCount = 0;
+    var masterTimer     = null;
+
+    function masterTickFn() {
+        // Evaluate before incrementing so tick 0 is a downbeat for all instruments.
+        INSTRUMENTS.forEach(function (name) {
+            if (!activeLoops[name]) return;
+            if (masterTickCount % LOOP_TICKS[name] === 0) {
+                var cell = findCell(name);
+                if (cell) triggerPlay(name, cell.cx, cell.cy, true);
+            }
+        });
+        masterTickCount++;
+    }
+
+    function startMasterClock() {
+        if (masterTimer) return;
+        masterTickCount = 0;
+        masterTimer = setInterval(masterTickFn, 250);
+    }
+
+    function stopMasterClock() {
+        if (masterTimer) {
+            clearInterval(masterTimer);
+            masterTimer = null;
+        }
+    }
+
     // ─── Play trigger (combines audio + visuals) ───────────────────────────────
     function triggerPlay(name, x, y, trusted) {
         playSound(name);
@@ -355,16 +386,13 @@
     function setupHoldTimer(pointerId, name) {
         var holdTimer = setTimeout(function () {
             if (activeLoops[name]) {
-                clearInterval(activeLoops[name]);
                 delete activeLoops[name];
                 istate[name].looping = false;
+                if (Object.keys(activeLoops).length === 0) stopMasterClock();
             } else {
+                activeLoops[name] = true;
                 istate[name].looping = true;
-                var interval = LOOP_CONFIG[name] || 1000;
-                activeLoops[name] = setInterval(function () {
-                    var cell = findCell(name);
-                    if (cell) triggerPlay(name, cell.cx, cell.cy, true);
-                }, interval);
+                startMasterClock();
             }
         }, 500);
         activePointers[pointerId] = { instrument: name, holdTimer: holdTimer };
