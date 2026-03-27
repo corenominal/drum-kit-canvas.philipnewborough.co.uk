@@ -3,6 +3,11 @@
     height: 100%;
 }
 
+* {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
 @font-face {
   font-family: "sniglet";
   src: url("/fonts/sniglet.woff2") format("woff2"),
