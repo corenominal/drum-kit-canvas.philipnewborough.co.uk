@@ -20,7 +20,22 @@ yarn-error.log*
 
 # OS files
 .DS_Store
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+._*
+.apdisk
+.directory
+.fseventsd
+.nfs*
+Desktop.ini
+ehthumbs.db
+Icon?
+$RECYCLE.BIN/
 Thumbs.db
+lost+found/
 
 # Editor directories and files
 .idea/
