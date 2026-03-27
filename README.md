@@ -1,4 +1,4 @@
-# Oliver's Drum Kit
+# Oliver's Drum Kit - Canvas Edition
 
 ![A Drum Kit for Oliver](public/img/og-image-1200x630.png)
 
