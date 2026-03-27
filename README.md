@@ -18,7 +18,10 @@ All rendering is done on a single HTML `<canvas>` element using a `requestAnimat
   - Alternate between two drums (A→B→A→B) → duo solo
   - Hit all 6 instruments at least once → classic drum solo
   - Combos are disabled while any loop is active
-- **Canvas rendering** — animated background gradients, per-instrument spin/pulse, sparkle particles, and expanding rings all drawn on `<canvas>`
+- **Animal sound easter eggs** — each per-instrument solo ends with a surprise animal sound (crash → lion, hi-hat → tiger, tom → monkey, snare → pig, floor tom → moo)
+- **BPM control** — a ±10 BPM control appears whenever at least one loop is active; range 60–200 BPM, default 120 BPM; all active loops stay locked to the same rhythmic grid
+- **Reverb** — a toggle button applies Web Audio API convolver reverb to the master output
+- **Canvas rendering** — animated background gradients (four colour themes that cycle on each hit), per-instrument spin/pulse, sparkle particles, expanding rings, and large background shapes all drawn on `<canvas>`
 - **PWA** — includes a service worker and Web App Manifest for offline use and home-screen installation
 - **Responsive layout** — 2×3 grid in portrait, 3×2 in landscape
 
