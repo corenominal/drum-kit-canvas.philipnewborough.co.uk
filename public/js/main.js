@@ -1,15 +1,21 @@
 'use strict';
 
 /**
- * Canvas Drum Kit — main.js
+ * WebGL Drum Kit — main.js
  *
- * Replaces all DOM-based animations (instrument spin/pulse, sparkles, rings,
- * looping glow, background gradient) with a single requestAnimationFrame
- * render loop on an HTML <canvas> for significantly better performance.
+ * All rendering has been converted from Canvas 2D to WebGL.
  *
- * Modals (splash, help) remain as standard HTML overlays.
- * COMBO! text and flash remain as DOM overlays (infrequent, complex animation).
- * Audio playback uses Howler.js (unchanged from original).
+ * Rendering layers (all WebGL):
+ *   1. Animated gradient background  — fullscreen quad, GLSL fragment shader
+ *   2. Cell dividers                 — line geometry
+ *   3. Background shapes             — batched triangulated polygons
+ *   4. Looping glow overlays         — coloured quads
+ *   5. Instrument images             — textured quads (SVG rasterised via 2D canvas)
+ *   6. Sparkles                      — batched triangulated shapes
+ *   7. Rings                         — triangle-strip annuli
+ *
+ * Modals (splash, help), COMBO! text/flash remain as DOM overlays.
+ * Audio playback uses Howler.js (unchanged).
  */
 (function () {
 
@@ -42,11 +48,25 @@
     ];
     let bgThemeIndex = 0;
 
-    // ─── Canvas ───────────────────────────────────────────────────────────────
+    // ─── Canvas / WebGL initialisation ───────────────────────────────────────
     const canvas = document.getElementById('drumkit-canvas');
-    const ctx    = canvas.getContext('2d');
-    let dpr = 1; // set in resizeCanvas
-    let W, H;    // logical (CSS-pixel) dimensions
+    let gl;
+
+    (function initWebGL() {
+        const opts = { alpha: false, antialias: true, premultipliedAlpha: false };
+        gl = canvas.getContext('webgl2', opts) ||
+             canvas.getContext('webgl',  opts) ||
+             canvas.getContext('experimental-webgl', opts);
+        if (!gl) {
+            console.error('WebGL not supported.');
+            return;
+        }
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    }());
+
+    let dpr = 1;
+    let W, H; // logical (CSS-pixel) dimensions
 
     function resizeCanvas() {
         dpr = window.devicePixelRatio || 1;
@@ -56,11 +76,13 @@
         canvas.height = Math.round(H * dpr);
         canvas.style.width  = W + 'px';
         canvas.style.height = H + 'px';
+        if (gl) gl.viewport(0, 0, canvas.width, canvas.height);
         computeCells();
+        rebuildDividerBuffer();
     }
 
     // ─── Grid layout ──────────────────────────────────────────────────────────
-    // Mirrors the original CSS grid: 2×3 portrait, 3×2 landscape.
+    // 2×3 portrait, 3×2 landscape.
     let cells = [];
 
     function computeCells() {
@@ -88,6 +110,469 @@
             if (x >= c.x && x < c.x + c.w && y >= c.y && y < c.y + c.h) return c;
         }
         return null;
+    }
+
+    function findCell(name) {
+        for (var i = 0; i < cells.length; i++) {
+            if (cells[i].name === name) return cells[i];
+        }
+        return null;
+    }
+
+    // ─── Colour helpers ───────────────────────────────────────────────────────
+    function hexToRGB(hex) {
+        var r = parseInt(hex.slice(1, 3), 16) / 255;
+        var g = parseInt(hex.slice(3, 5), 16) / 255;
+        var b = parseInt(hex.slice(5, 7), 16) / 255;
+        return [r, g, b];
+    }
+
+    // ─── Shader helpers ───────────────────────────────────────────────────────
+    function compileShader(type, source) {
+        var sh = gl.createShader(type);
+        gl.shaderSource(sh, source);
+        gl.compileShader(sh);
+        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+            console.error('Shader compile error:', gl.getShaderInfoLog(sh));
+            gl.deleteShader(sh);
+            return null;
+        }
+        return sh;
+    }
+
+    function createProgram(vsSource, fsSource) {
+        var vs   = compileShader(gl.VERTEX_SHADER,   vsSource);
+        var fs   = compileShader(gl.FRAGMENT_SHADER, fsSource);
+        var prog = gl.createProgram();
+        gl.attachShader(prog, vs);
+        gl.attachShader(prog, fs);
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+            console.error('Program link error:', gl.getProgramInfoLog(prog));
+            return null;
+        }
+        return prog;
+    }
+
+    // ─── Program 1: Fluid background ─────────────────────────────────────────
+    // Fullscreen clip-space quad; the fragment shader builds the fluid animation.
+    var bgProg, bgVbo;
+    var bgU_resolution, bgU_time, bgU_c0, bgU_c1, bgU_c2, bgU_c3, bgU_c4;
+
+    var BG_VS = [
+        'attribute vec2 a_pos;',
+        'void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }',
+    ].join('\n');
+
+    // Domain-warped fluid: two rounds of warping with sine/cosine lattices give
+    // an organic, lava-lamp-like flow.  The warp result is mapped through the
+    // five theme colours interpolated with sampleGradient().
+    var BG_FS = [
+        'precision mediump float;',
+        'uniform vec2  u_resolution;',
+        'uniform float u_time;',
+        'uniform vec3  u_c0, u_c1, u_c2, u_c3, u_c4;',
+        'vec3 sampleGradient(float t) {',
+        '    float s = 0.25;',
+        '    if (t < s)          return mix(u_c0, u_c1, t / s);',
+        '    else if (t < 2.0*s) return mix(u_c1, u_c2, (t - s) / s);',
+        '    else if (t < 3.0*s) return mix(u_c2, u_c3, (t - 2.0*s) / s);',
+        '    else                return mix(u_c3, u_c4, (t - 3.0*s) / s);',
+        '}',
+        'void main() {',
+        '    vec2 uv = gl_FragCoord.xy / u_resolution;',
+        '    float ar = u_resolution.x / u_resolution.y;',
+        '    uv.x *= ar;',
+        '    float T = u_time * 0.25;',
+        // First warp layer
+        '    vec2 q;',
+        '    q.x = sin(uv.x * 1.8 + T)        + 0.5 * sin(uv.y * 2.4 + T * 0.7);',
+        '    q.y = sin(uv.y * 2.1 + T * 0.9)   + 0.5 * sin(uv.x * 1.6 + T * 1.1);',
+        // Second warp layer applied on top of first
+        '    vec2 r;',
+        '    r.x = sin((uv.x + q.x) * 1.4 + T * 0.8) + 0.4 * cos((uv.y + q.y) * 2.0 + T * 0.5);',
+        '    r.y = cos((uv.y + q.y) * 1.9 + T * 0.6) + 0.4 * sin((uv.x + q.x) * 2.3 + T * 0.9);',
+        '    float f = clamp((length(r) - 0.2) * 0.35, 0.0, 1.0);',
+        '    gl_FragColor = vec4(sampleGradient(f), 1.0);',
+        '}',
+    ].join('\n');
+
+    function initBgProgram() {
+        bgProg         = createProgram(BG_VS, BG_FS);
+        bgU_resolution = gl.getUniformLocation(bgProg, 'u_resolution');
+        bgU_time       = gl.getUniformLocation(bgProg, 'u_time');
+        bgU_c0         = gl.getUniformLocation(bgProg, 'u_c0');
+        bgU_c1         = gl.getUniformLocation(bgProg, 'u_c1');
+        bgU_c2         = gl.getUniformLocation(bgProg, 'u_c2');
+        bgU_c3         = gl.getUniformLocation(bgProg, 'u_c3');
+        bgU_c4         = gl.getUniformLocation(bgProg, 'u_c4');
+
+        bgVbo = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, bgVbo);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            -1,-1,  1,-1,  -1, 1,
+             1,-1,  1, 1,  -1, 1,
+        ]), gl.STATIC_DRAW);
+    }
+
+    function drawBackground(bgTime) {
+        var colors = BG_THEMES[bgThemeIndex];
+
+        gl.useProgram(bgProg);
+        gl.uniform2f(bgU_resolution, canvas.width, canvas.height);
+        gl.uniform1f(bgU_time, bgTime);
+
+        var cols = colors.map(hexToRGB);
+        gl.uniform3fv(bgU_c0, cols[0]);
+        gl.uniform3fv(bgU_c1, cols[1]);
+        gl.uniform3fv(bgU_c2, cols[2]);
+        gl.uniform3fv(bgU_c3, cols[3]);
+        gl.uniform3fv(bgU_c4, cols[4]);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, bgVbo);
+        var aPos = gl.getAttribLocation(bgProg, 'a_pos');
+        gl.enableVertexAttribArray(aPos);
+        gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
+    // ─── Program 2: Flat-colour geometry (sparkles, rings, shapes, glow, dividers) ──
+    // Per-vertex layout: x, y, r, g, b, a  (6 floats = 24 bytes)
+    var flatProg, flatBuf;
+    var flatA_pos, flatA_color;
+
+    var FLAT_VS = [
+        'attribute vec2 a_pos;',
+        'attribute vec4 a_color;',
+        'varying   vec4 v_color;',
+        'uniform   vec2 u_resolution;',
+        'void main() {',
+        '    vec2 clip = (a_pos / u_resolution) * 2.0 - 1.0;',
+        '    clip.y = -clip.y;',
+        '    gl_Position = vec4(clip, 0.0, 1.0);',
+        '    v_color = a_color;',
+        '}',
+    ].join('\n');
+
+    var FLAT_FS = [
+        'precision mediump float;',
+        'varying vec4 v_color;',
+        'void main() { gl_FragColor = v_color; }',
+    ].join('\n');
+
+    var FLAT_MAX_VERTS = 65536;
+    var flatVerts;   // Float32Array (x, y, r, g, b, a per vertex)
+    var flatCount = 0;
+    var FLAT_STRIDE = 6;
+
+    function initFlatProgram() {
+        flatProg    = createProgram(FLAT_VS, FLAT_FS);
+        flatA_pos   = gl.getAttribLocation(flatProg, 'a_pos');
+        flatA_color = gl.getAttribLocation(flatProg, 'a_color');
+        flatBuf     = gl.createBuffer();
+        flatVerts   = new Float32Array(FLAT_MAX_VERTS * FLAT_STRIDE);
+    }
+
+    function flatReset() { flatCount = 0; }
+
+    function flatVert(x, y, r, g, b, a) {
+        if (flatCount >= FLAT_MAX_VERTS) return;
+        var off = flatCount * FLAT_STRIDE;
+        flatVerts[off]     = x; flatVerts[off+1] = y;
+        flatVerts[off+2]   = r; flatVerts[off+3] = g;
+        flatVerts[off+4]   = b; flatVerts[off+5] = a;
+        flatCount++;
+    }
+
+    function flatTri(x0,y0, x1,y1, x2,y2, r,g,b,a) {
+        flatVert(x0,y0,r,g,b,a); flatVert(x1,y1,r,g,b,a); flatVert(x2,y2,r,g,b,a);
+    }
+
+    function flatQuad(x, y, w, h, r, g, b, a) {
+        flatTri(x,   y,   x+w, y,   x,   y+h, r,g,b,a);
+        flatTri(x+w, y,   x+w, y+h, x,   y+h, r,g,b,a);
+    }
+
+    // Fan-triangulate a convex polygon from its centroid
+    function flatPolygon(pts, cx, cy, r, g, b, a) {
+        for (var i = 0; i < pts.length; i++) {
+            var p0 = pts[i], p1 = pts[(i+1)%pts.length];
+            flatTri(cx,cy, p0[0],p0[1], p1[0],p1[1], r,g,b,a);
+        }
+    }
+
+    var RING_SEGS = 64;
+
+    function flatRing(cx, cy, radius, lineWidth, r, g, b, a) {
+        var inner = radius - lineWidth * 0.5;
+        var outer = radius + lineWidth * 0.5;
+        for (var i = 0; i < RING_SEGS; i++) {
+            var a0 = (i     / RING_SEGS) * Math.PI * 2;
+            var a1 = ((i+1) / RING_SEGS) * Math.PI * 2;
+            var ix0 = cx + Math.cos(a0)*inner, iy0 = cy + Math.sin(a0)*inner;
+            var ox0 = cx + Math.cos(a0)*outer, oy0 = cy + Math.sin(a0)*outer;
+            var ix1 = cx + Math.cos(a1)*inner, iy1 = cy + Math.sin(a1)*inner;
+            var ox1 = cx + Math.cos(a1)*outer, oy1 = cy + Math.sin(a1)*outer;
+            flatTri(ix0,iy0, ox0,oy0, ix1,iy1, r,g,b,a);
+            flatTri(ox0,oy0, ox1,oy1, ix1,iy1, r,g,b,a);
+        }
+    }
+
+    function flatFlush(drawMode) {
+        if (flatCount === 0) return;
+        drawMode = drawMode || gl.TRIANGLES;
+
+        gl.useProgram(flatProg);
+        gl.uniform2f(gl.getUniformLocation(flatProg, 'u_resolution'), W, H);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, flatBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, flatVerts.subarray(0, flatCount * FLAT_STRIDE), gl.DYNAMIC_DRAW);
+
+        var stride = FLAT_STRIDE * 4;
+        gl.enableVertexAttribArray(flatA_pos);
+        gl.vertexAttribPointer(flatA_pos,   2, gl.FLOAT, false, stride, 0);
+        gl.enableVertexAttribArray(flatA_color);
+        gl.vertexAttribPointer(flatA_color, 4, gl.FLOAT, false, stride, 8);
+
+        gl.drawArrays(drawMode, 0, flatCount);
+        flatCount = 0;
+    }
+
+    // ─── Program 3: Textured quads (instrument images) ────────────────────────
+    // Per-vertex layout: x, y, u, v  (4 floats = 16 bytes)
+    var texProg, texBuf;
+    var texA_pos, texA_uv, texU_resolution, texU_sampler, texU_alpha;
+
+    var TEX_VS = [
+        'attribute vec2 a_pos;',
+        'attribute vec2 a_uv;',
+        'varying   vec2 v_uv;',
+        'uniform   vec2 u_resolution;',
+        'void main() {',
+        '    vec2 clip = (a_pos / u_resolution) * 2.0 - 1.0;',
+        '    clip.y = -clip.y;',
+        '    gl_Position = vec4(clip, 0.0, 1.0);',
+        '    v_uv = a_uv;',
+        '}',
+    ].join('\n');
+
+    var TEX_FS = [
+        'precision mediump float;',
+        'varying   vec2      v_uv;',
+        'uniform   sampler2D u_sampler;',
+        'uniform   float     u_alpha;',
+        'void main() {',
+        '    vec4 t = texture2D(u_sampler, v_uv);',
+        '    gl_FragColor = vec4(t.rgb, t.a * u_alpha);',
+        '}',
+    ].join('\n');
+
+    var TEX_STRIDE = 4;
+
+    function initTexProgram() {
+        texProg         = createProgram(TEX_VS, TEX_FS);
+        texA_pos        = gl.getAttribLocation(texProg, 'a_pos');
+        texA_uv         = gl.getAttribLocation(texProg, 'a_uv');
+        texU_resolution = gl.getUniformLocation(texProg, 'u_resolution');
+        texU_sampler    = gl.getUniformLocation(texProg, 'u_sampler');
+        texU_alpha      = gl.getUniformLocation(texProg, 'u_alpha');
+        texBuf          = gl.createBuffer();
+    }
+
+    function drawTexturedQuadRotated(tex, cx, cy, size, rotation) {
+        var hw  = size / 2;
+        var cos = Math.cos(rotation), sin = Math.sin(rotation);
+
+        var tlx = cx + (-hw)*cos - (-hw)*sin, tly = cy + (-hw)*sin + (-hw)*cos;
+        var trx = cx + ( hw)*cos - (-hw)*sin, try_ = cy + ( hw)*sin + (-hw)*cos;
+        var blx = cx + (-hw)*cos - ( hw)*sin, bly = cy + (-hw)*sin + ( hw)*cos;
+        var brx = cx + ( hw)*cos - ( hw)*sin, bry = cy + ( hw)*sin + ( hw)*cos;
+
+        var verts = new Float32Array([
+            tlx, tly, 0, 0,
+            trx, try_, 1, 0,
+            blx, bly, 0, 1,
+            trx, try_, 1, 0,
+            brx, bry, 1, 1,
+            blx, bly, 0, 1,
+        ]);
+
+        gl.useProgram(texProg);
+        gl.uniform2f(texU_resolution, W, H);
+        gl.uniform1f(texU_alpha, 1.0);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.uniform1i(texU_sampler, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, texBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
+
+        var stride = TEX_STRIDE * 4;
+        gl.enableVertexAttribArray(texA_pos);
+        gl.vertexAttribPointer(texA_pos, 2, gl.FLOAT, false, stride, 0);
+        gl.enableVertexAttribArray(texA_uv);
+        gl.vertexAttribPointer(texA_uv,  2, gl.FLOAT, false, stride, 8);
+
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
+    // ─── Texture helpers ──────────────────────────────────────────────────────
+    function createTextureFromCanvas(offscreenCanvas) {
+        var tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, offscreenCanvas);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        return tex;
+    }
+
+    // ─── SVG texture loading ──────────────────────────────────────────────────
+    // Rasterise each SVG onto an offscreen 2D canvas, then upload as a WebGL texture.
+    var textures = {};
+    var texturesReady = 0;
+    var TEX_SIZE = 512;
+
+    function loadTextures(cb) {
+        INSTRUMENTS.forEach(function (name) {
+            var img = new Image();
+            img.onload = function () {
+                var offscreen = document.createElement('canvas');
+                offscreen.width = offscreen.height = TEX_SIZE;
+                var ctx2d = offscreen.getContext('2d');
+                ctx2d.clearRect(0, 0, TEX_SIZE, TEX_SIZE);
+                ctx2d.drawImage(img, 0, 0, TEX_SIZE, TEX_SIZE);
+                textures[name] = createTextureFromCanvas(offscreen);
+                if (++texturesReady === INSTRUMENTS.length) cb();
+            };
+            img.src = './img/' + name + '.svg';
+        });
+    }
+
+    // ─── Cell divider buffer ──────────────────────────────────────────────────
+    var dividerData = null;
+
+    function rebuildDividerBuffer() {
+        if (!cells.length) return;
+        var r = 1, g2 = 1, b2 = 1, a2 = 0.05;
+        var verts = [];
+        cells.forEach(function (c) {
+            // bottom edge
+            verts.push(c.x, c.y+c.h, r,g2,b2,a2, c.x+c.w, c.y+c.h, r,g2,b2,a2);
+            // right edge
+            verts.push(c.x+c.w, c.y, r,g2,b2,a2, c.x+c.w, c.y+c.h, r,g2,b2,a2);
+        });
+        dividerData = new Float32Array(verts);
+    }
+
+    function drawDividers() {
+        if (!dividerData || dividerData.length === 0) return;
+        gl.useProgram(flatProg);
+        gl.uniform2f(gl.getUniformLocation(flatProg, 'u_resolution'), W, H);
+        gl.bindBuffer(gl.ARRAY_BUFFER, flatBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, dividerData, gl.DYNAMIC_DRAW);
+        var stride = FLAT_STRIDE * 4;
+        gl.enableVertexAttribArray(flatA_pos);
+        gl.vertexAttribPointer(flatA_pos,   2, gl.FLOAT, false, stride, 0);
+        gl.enableVertexAttribArray(flatA_color);
+        gl.vertexAttribPointer(flatA_color, 4, gl.FLOAT, false, stride, 8);
+        gl.lineWidth(1);
+        gl.drawArrays(gl.LINES, 0, dividerData.length / FLAT_STRIDE);
+    }
+
+    // ─── Sparkle geometry helpers ─────────────────────────────────────────────
+    function emitSparkleGeometry(shape, cx, cy, halfSize, r, g, b, a) {
+        var i, a0, a1;
+        switch (shape) {
+            case 'circle': {
+                var SEGS = 16;
+                for (i = 0; i < SEGS; i++) {
+                    a0 = (i     / SEGS) * Math.PI * 2;
+                    a1 = ((i+1) / SEGS) * Math.PI * 2;
+                    flatTri(cx, cy,
+                        cx + Math.cos(a0)*halfSize, cy + Math.sin(a0)*halfSize,
+                        cx + Math.cos(a1)*halfSize, cy + Math.sin(a1)*halfSize,
+                        r, g, b, a);
+                }
+                break;
+            }
+            case 'diamond':
+                flatPolygon([[cx,cy-halfSize],[cx+halfSize,cy],[cx,cy+halfSize],[cx-halfSize,cy]], cx, cy, r,g,b,a);
+                break;
+            case 'triangle':
+                flatPolygon([[cx,cy-halfSize],[cx+halfSize,cy+halfSize],[cx-halfSize,cy+halfSize]], cx, cy, r,g,b,a);
+                break;
+            case 'star': {
+                var outer = halfSize, inner = halfSize * 0.4;
+                var pts = [];
+                for (i = 0; i < 10; i++) {
+                    var rad = i % 2 === 0 ? outer : inner;
+                    var ang = i * Math.PI / 5 - Math.PI / 2;
+                    pts.push([cx + Math.cos(ang)*rad, cy + Math.sin(ang)*rad]);
+                }
+                flatPolygon(pts, cx, cy, r,g,b,a);
+                break;
+            }
+        }
+    }
+
+    // ─── Rotated bg-shape emitter ─────────────────────────────────────────────
+    function emitRotatedBgShape(shape, cx, cy, halfSize, rot, r, g, b, a) {
+        var cosR = Math.cos(rot), sinR = Math.sin(rot);
+        function rx(lx, ly) { return cx + lx*cosR - ly*sinR; }
+        function ry(lx, ly) { return cy + lx*sinR + ly*cosR; }
+
+        function rotPoly(lpts) {
+            for (var i = 0; i < lpts.length; i++) {
+                var p0 = lpts[i], p1 = lpts[(i+1)%lpts.length];
+                flatTri(cx,cy, rx(p0[0],p0[1]),ry(p0[0],p0[1]), rx(p1[0],p1[1]),ry(p1[0],p1[1]), r,g,b,a);
+            }
+        }
+
+        var i, a0, a1;
+        switch (shape) {
+            case 'circle': {
+                var SEGS = 24;
+                for (i = 0; i < SEGS; i++) {
+                    a0 = (i     / SEGS) * Math.PI * 2;
+                    a1 = ((i+1) / SEGS) * Math.PI * 2;
+                    flatTri(cx,cy,
+                        rx(Math.cos(a0)*halfSize, Math.sin(a0)*halfSize),
+                        ry(Math.cos(a0)*halfSize, Math.sin(a0)*halfSize),
+                        rx(Math.cos(a1)*halfSize, Math.sin(a1)*halfSize),
+                        ry(Math.cos(a1)*halfSize, Math.sin(a1)*halfSize),
+                        r,g,b,a);
+                }
+                break;
+            }
+            case 'diamond':
+                rotPoly([[0,-halfSize],[halfSize,0],[0,halfSize],[-halfSize,0]]);
+                break;
+            case 'triangle':
+                rotPoly([[0,-halfSize],[halfSize*0.866,halfSize*0.5],[-halfSize*0.866,halfSize*0.5]]);
+                break;
+            case 'star': {
+                var outer = halfSize, inner = halfSize * 0.45;
+                var lpts = [];
+                for (i = 0; i < 10; i++) {
+                    var rad = i % 2 === 0 ? outer : inner;
+                    var ang = i * Math.PI / 5 - Math.PI / 2;
+                    lpts.push([Math.cos(ang)*rad, Math.sin(ang)*rad]);
+                }
+                rotPoly(lpts);
+                break;
+            }
+            case 'hexagon': {
+                var hpts = [];
+                for (i = 0; i < 6; i++) {
+                    var ha = i * Math.PI / 3;
+                    hpts.push([Math.cos(ha)*halfSize, Math.sin(ha)*halfSize]);
+                }
+                rotPoly(hpts);
+                break;
+            }
+        }
     }
 
     // ─── Audio ────────────────────────────────────────────────────────────────
@@ -120,14 +605,12 @@
         convolver.buffer = buildImpulseResponse(audioCtx);
         reverbWetGain = audioCtx.createGain();
         reverbWetGain.gain.value = 0;
-        // Rewire: masterGain → dry (destination) + masterGain → convolver → wet → destination
         Howler.masterGain.disconnect();
         Howler.masterGain.connect(audioCtx.destination);
         Howler.masterGain.connect(convolver);
         convolver.connect(reverbWetGain);
         reverbWetGain.connect(audioCtx.destination);
         reverbInitialised = true;
-        // Apply current state in case toggle was pressed before first sound
         if (reverbEnabled) reverbWetGain.gain.value = 0.35;
     }
 
@@ -149,32 +632,16 @@
             sounds[name] = new Howl({ src: ['./audio/' + name + '.mp3'] });
         });
         sounds['monkey'] = new Howl({ src: ['./audio/monkey.mp3'] });
-        sounds['pig'] = new Howl({ src: ['./audio/pig.mp3'] });
-        sounds['tiger'] = new Howl({ src: ['./audio/tiger.mp3'] });
-        sounds['moo'] = new Howl({ src: ['./audio/moo.mp3'] });
-        sounds['lion'] = new Howl({ src: ['./audio/lion.mp3'] });
+        sounds['pig']    = new Howl({ src: ['./audio/pig.mp3'] });
+        sounds['tiger']  = new Howl({ src: ['./audio/tiger.mp3'] });
+        sounds['moo']    = new Howl({ src: ['./audio/moo.mp3'] });
+        sounds['lion']   = new Howl({ src: ['./audio/lion.mp3'] });
         sounds['oliver'] = new Howl({ src: ['./audio/oliver.mp3'] });
     }
 
     function playSound(name) {
         if (!reverbInitialised) initReverbGraph();
         if (sounds[name]) sounds[name].play();
-    }
-
-    // ─── SVG image loading ────────────────────────────────────────────────────
-    var images = {};
-    var imagesReady = 0;
-
-    function loadImages(cb) {
-        INSTRUMENTS.forEach(function (name) {
-            var img = new Image();
-            img.onload = function () {
-                imagesReady++;
-                if (imagesReady === INSTRUMENTS.length) cb();
-            };
-            img.src = './img/' + name + '.svg';
-            images[name] = img;
-        });
     }
 
     // ─── Per-instrument animation state ───────────────────────────────────────
@@ -228,39 +695,6 @@
         }
     }
 
-    function drawSparkleShape(context, shape, halfSize) {
-        context.beginPath();
-        switch (shape) {
-            case 'circle':
-                context.arc(0, 0, halfSize, 0, Math.PI * 2);
-                break;
-            case 'diamond':
-                context.moveTo(0, -halfSize);
-                context.lineTo(halfSize, 0);
-                context.lineTo(0, halfSize);
-                context.lineTo(-halfSize, 0);
-                context.closePath();
-                break;
-            case 'triangle':
-                context.moveTo(0, -halfSize);
-                context.lineTo(halfSize, halfSize);
-                context.lineTo(-halfSize, halfSize);
-                context.closePath();
-                break;
-            case 'star': {
-                var outer = halfSize, inner = halfSize * 0.4;
-                for (var j = 0; j < 10; j++) {
-                    var r = j % 2 === 0 ? outer : inner;
-                    var a = j * Math.PI / 5 - Math.PI / 2;
-                    if (j === 0) context.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-                    else         context.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-                }
-                context.closePath();
-                break;
-            }
-        }
-    }
-
     // ─── Background shapes ────────────────────────────────────────────────────
     var bgShapes = [];
 
@@ -281,75 +715,6 @@
                 life:     1.2 + Math.random() * 1.0,
             });
         }
-    }
-
-    function drawBgShape(context, shape, halfSize) {
-        context.beginPath();
-        switch (shape) {
-            case 'circle':
-                context.arc(0, 0, halfSize, 0, Math.PI * 2);
-                break;
-            case 'diamond':
-                context.moveTo(0, -halfSize);
-                context.lineTo(halfSize, 0);
-                context.lineTo(0, halfSize);
-                context.lineTo(-halfSize, 0);
-                context.closePath();
-                break;
-            case 'triangle':
-                context.moveTo(0, -halfSize);
-                context.lineTo(halfSize * 0.866, halfSize * 0.5);
-                context.lineTo(-halfSize * 0.866, halfSize * 0.5);
-                context.closePath();
-                break;
-            case 'star': {
-                var outer = halfSize, inner = halfSize * 0.45;
-                for (var j = 0; j < 10; j++) {
-                    var r = j % 2 === 0 ? outer : inner;
-                    var a = j * Math.PI / 5 - Math.PI / 2;
-                    if (j === 0) context.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-                    else         context.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-                }
-                context.closePath();
-                break;
-            }
-            case 'hexagon': {
-                for (var k = 0; k < 6; k++) {
-                    var ha = k * Math.PI / 3;
-                    if (k === 0) context.moveTo(Math.cos(ha) * halfSize, Math.sin(ha) * halfSize);
-                    else         context.lineTo(Math.cos(ha) * halfSize, Math.sin(ha) * halfSize);
-                }
-                context.closePath();
-                break;
-            }
-        }
-    }
-
-    function updateAndDrawBgShapes(dt) {
-        var alive = [];
-        for (var i = 0; i < bgShapes.length; i++) {
-            var s = bgShapes[i];
-            s.age += dt;
-            if (s.age >= s.life) continue;
-            alive.push(s);
-
-            var t       = s.age / s.life;
-            var fadeIn  = t < 0.15 ? t / 0.15 : 1;
-            var opacity = 0.22 * fadeIn * (1 - t);
-            var scale   = 0.3 + 0.8 * t;
-            s.rotation += s.rotSpeed * dt;
-
-            ctx.save();
-            ctx.globalAlpha = opacity;
-            ctx.fillStyle   = s.color;
-            ctx.translate(s.x, s.y);
-            ctx.rotate(s.rotation);
-            ctx.scale(scale, scale);
-            drawBgShape(ctx, s.shape, s.size);
-            ctx.fill();
-            ctx.restore();
-        }
-        bgShapes = alive;
     }
 
     // ─── Active loops ─────────────────────────────────────────────────────────
@@ -470,13 +835,6 @@
             updateBpmVisibility();
         }, 500);
         activePointers[pointerId] = { instrument: name, holdTimer: holdTimer };
-    }
-
-    function findCell(name) {
-        for (var i = 0; i < cells.length; i++) {
-            if (cells[i].name === name) return cells[i];
-        }
-        return null;
     }
 
     function cancelPointer(event) {
@@ -818,99 +1176,81 @@
     };
 
     // ─────────────────────────────────────────────────────────────────────────
-    // ─── Render loop ─────────────────────────────────────────────────────────
+    // ─── WebGL update + draw functions ────────────────────────────────────────
     // ─────────────────────────────────────────────────────────────────────────
 
-    var bgTime = 0; // monotonically increasing seconds for background animation
+    function updateAndDrawBgShapes(dt) {
+        var alive = [];
+        for (var i = 0; i < bgShapes.length; i++) {
+            var s = bgShapes[i];
+            s.age += dt;
+            if (s.age >= s.life) continue;
+            alive.push(s);
 
-    // Draw the animated gradient background (replaces CSS gradient-shift animation)
-    function drawBackground() {
-        // Replicate CSS background-position animation: 0%→100%→0% over 8 s
-        var p   = (bgTime / 8) % 1;
-        var pos = p < 0.5 ? p * 2 : 2 - p * 2; // triangle wave 0→1→0
-        var colors = BG_THEMES[bgThemeIndex];
+            var t       = s.age / s.life;
+            var fadeIn  = t < 0.15 ? t / 0.15 : 1;
+            var alpha   = 0.22 * fadeIn * (1 - t);
+            var scale   = 0.3 + 0.8 * t;
+            s.rotation += s.rotSpeed * dt;
 
-        // Diagonal gradient whose origin slides left/right
-        var x0 = W * pos * 0.6;
-        var y0 = 0;
-        var x1 = W * (1 - pos * 0.4);
-        var y1 = H;
-        var grd = ctx.createLinearGradient(x0, y0, x1, y1);
-        var n = colors.length;
-        for (var i = 0; i < n; i++) {
-            grd.addColorStop(i / (n - 1), colors[i]);
+            var rgb = hexToRGB(s.color);
+            emitRotatedBgShape(s.shape, s.x, s.y, s.size * scale, s.rotation,
+                               rgb[0], rgb[1], rgb[2], alpha);
         }
-        ctx.fillStyle = grd;
-        ctx.fillRect(0, 0, W, H);
-
-        // Subtle cell dividers
-        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-        ctx.lineWidth   = 1;
-        for (var c = 0; c < cells.length; c++) {
-            var cell = cells[c];
-            ctx.strokeRect(cell.x + 0.5, cell.y + 0.5, cell.w - 1, cell.h - 1);
-        }
+        bgShapes = alive;
     }
 
-    // Update and draw all six instrument images
-    function updateAndDrawInstruments(dt) {
+    function updateAndDrawInstruments(dt, bgTime) {
         for (var i = 0; i < INSTRUMENTS.length; i++) {
             var name = INSTRUMENTS[i];
             var st   = istate[name];
-            var img  = images[name];
             var cell = findCell(name);
             if (!cell) continue;
 
             // Advance animation state
             if (SPIN_SET.has(name)) {
-                // CSS spin: 5000 ms per full rotation → 2π/5 rad/s
                 st.rotation += (Math.PI * 2 / 5) * dt;
             } else {
-                // CSS pulse: 1000 ms period
                 st.pulsePhase += Math.PI * 2 * dt;
             }
-
-            // Decay hit-scale back to 1.0 over ~150 ms
             if (st.hitScale > 1) {
                 st.hitScale = Math.max(1, st.hitScale - dt / 0.15);
             }
 
-            // Looping highlight — pulsing glow behind the instrument
+            // Looping glow quad + border drawn via flat program
             if (st.looping) {
                 var glowT  = (Math.sin(bgTime * Math.PI / 0.6) + 1) * 0.5;
                 var alpha  = 0.08 + 0.12 * glowT;
-                ctx.fillStyle = 'rgba(255,255,255,' + alpha + ')';
-                ctx.fillRect(cell.x, cell.y, cell.w, cell.h);
+                flatQuad(cell.x, cell.y, cell.x + cell.w, cell.y + cell.h,
+                         1, 1, 1, alpha);
 
                 var bAlpha = 0.25 + 0.35 * glowT;
-                ctx.strokeStyle = 'rgba(255,255,255,' + bAlpha + ')';
-                ctx.lineWidth = 4;
-                ctx.strokeRect(cell.x + 2, cell.y + 2, cell.w - 4, cell.h - 4);
+                var lw = 4;
+                // Border as four thin quads
+                flatQuad(cell.x + 2,          cell.y + 2,          cell.x + cell.w - 2, cell.y + 2 + lw,      1, 1, 1, bAlpha);
+                flatQuad(cell.x + 2,          cell.y + cell.h - 2 - lw, cell.x + cell.w - 2, cell.y + cell.h - 2, 1, 1, 1, bAlpha);
+                flatQuad(cell.x + 2,          cell.y + 2 + lw,     cell.x + 2 + lw,     cell.y + cell.h - 2 - lw, 1, 1, 1, bAlpha);
+                flatQuad(cell.x + cell.w - 2 - lw, cell.y + 2 + lw, cell.x + cell.w - 2, cell.y + cell.h - 2 - lw, 1, 1, 1, bAlpha);
             }
 
-            // Image size: match original CSS 88% of the shorter cell dimension
             var imgSize = Math.min(cell.w, cell.h) * 0.88;
-
-            ctx.save();
-            ctx.translate(cell.cx, cell.cy);
+            var rotation = 0;
+            var scale = st.hitScale;
 
             if (SPIN_SET.has(name)) {
-                ctx.rotate(st.rotation);
+                rotation = st.rotation;
             } else {
-                // Pulse: scale oscillates 1.0 → 1.025 → 1.0 (gentle; original CSS was 1.0→1.05)
                 var pScale = 1 + 0.025 * Math.sin(st.pulsePhase);
-                ctx.scale(pScale, pScale);
+                scale *= pScale;
             }
 
-            // Hit feedback scale (tap response)
-            ctx.scale(st.hitScale, st.hitScale);
-
-            ctx.drawImage(img, -imgSize / 2, -imgSize / 2, imgSize, imgSize);
-            ctx.restore();
+            var tex = textures[name];
+            if (tex) {
+                drawTexturedQuadRotated(tex, cell.cx, cell.cy, imgSize * scale, rotation);
+            }
         }
     }
 
-    // Update + draw sparkles (replaces DOM .sparkle elements)
     function updateAndDrawSparkles(dt) {
         var alive = [];
         for (var i = 0; i < sparkles.length; i++) {
@@ -921,23 +1261,17 @@
 
             var t       = s.age / s.life;
             var opacity = 1 - t;
-            var scale   = 1 - 0.7 * t;
+            var scl     = 1 - 0.7 * t;
             var x       = s.ox + s.dx * t;
             var y       = s.oy + s.dy * t;
 
-            ctx.save();
-            ctx.globalAlpha = opacity;
-            ctx.fillStyle   = s.color;
-            ctx.translate(x, y);
-            ctx.scale(scale, scale);
-            drawSparkleShape(ctx, s.shape, s.size / 2);
-            ctx.fill();
-            ctx.restore();
+            var rgb = hexToRGB(s.color);
+            emitSparkleGeometry(s.shape, x, y, (s.size / 2) * scl,
+                                rgb[0], rgb[1], rgb[2], opacity);
         }
         sparkles = alive;
     }
 
-    // Update + draw rings (replaces DOM .ring elements)
     function updateAndDrawRings(dt) {
         var alive = [];
         for (var i = 0; i < rings.length; i++) {
@@ -948,47 +1282,48 @@
             if (effectiveAge >= r.life) continue;
             alive.push(r);
 
-            var t      = effectiveAge / r.life;
-            // Matches CSS ring-expand: 20px → 400px diameter → use radius 10px → 200px
+            var t       = effectiveAge / r.life;
             var radius  = 10 + 190 * t;
             var opacity = 0.9 * (1 - t);
-
-            ctx.save();
-            ctx.globalAlpha = opacity;
-            ctx.strokeStyle = r.color;
-            ctx.lineWidth   = 4;
-            ctx.beginPath();
-            ctx.arc(r.cx, r.cy, radius, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.restore();
+            var rgb     = hexToRGB(r.color);
+            flatRing(r.cx, r.cy, radius, 4, rgb[0], rgb[1], rgb[2], opacity);
         }
         rings = alive;
     }
 
-    // ─── Main rAF loop ────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // ─── Render loop ─────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+
+    var bgTime = 0;
     var lastTs = 0;
 
     function frame(ts) {
         requestAnimationFrame(frame);
 
-        var dt = Math.min((ts - lastTs) / 1000, 0.1); // cap at 100 ms (tab reactivation)
+        var dt = Math.min((ts - lastTs) / 1000, 0.1);
         lastTs  = ts;
         bgTime += dt;
 
-        // Reset transform, clear in physical pixels, then re-apply DPR scale
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
 
-        drawBackground();
+        drawBackground(bgTime);
+        drawDividers();
+
+        flatReset();
         updateAndDrawBgShapes(dt);
-        updateAndDrawInstruments(dt);
+        updateAndDrawInstruments(dt, bgTime);
         updateAndDrawSparkles(dt);
         updateAndDrawRings(dt);
+        flatFlush();
     }
 
     // ─── Initialisation ───────────────────────────────────────────────────────
     resizeCanvas();
+    initBgProgram();
+    initFlatProgram();
+    initTexProgram();
     initAudio();
 
     window.addEventListener('resize', resizeCanvas);
@@ -1006,7 +1341,7 @@
         setReverb(!reverbEnabled);
     });
 
-    loadImages(function () {
+    loadTextures(function () {
         requestAnimationFrame(frame);
     });
 
