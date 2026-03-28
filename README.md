@@ -6,7 +6,7 @@ A browser-based drum kit built with HTML, CSS, and JavaScript, made as a fun int
 
 Live at [drum-kit-canvas.philipnewborough.co.uk](https://drum-kit-canvas.philipnewborough.co.uk)
 
-All rendering is done on a single HTML `<canvas>` element using a `requestAnimationFrame` loop, replacing earlier DOM-based animations for better performance. Audio playback is handled by [Howler.js](https://howlerjs.com/).
+All rendering is done on a single HTML `<canvas>` element via WebGL (WebGL 2 with a WebGL 1 fallback) using a `requestAnimationFrame` loop. Audio playback is handled by [Howler.js](https://howlerjs.com/).
 
 ## Features
 
@@ -21,7 +21,7 @@ All rendering is done on a single HTML `<canvas>` element using a `requestAnimat
 - **Animal sound easter eggs** — each per-instrument solo ends with a surprise animal sound (crash → lion, hi-hat → tiger, tom → monkey, snare → pig, floor tom → moo)
 - **BPM control** — a ±10 BPM control appears whenever at least one loop is active; range 60–200 BPM, default 120 BPM; all active loops stay locked to the same rhythmic grid
 - **Reverb** — a toggle button applies Web Audio API convolver reverb to the master output
-- **Canvas rendering** — animated background gradients (four colour themes that cycle on each hit), per-instrument spin/pulse, sparkle particles, expanding rings, and large background shapes all drawn on `<canvas>`
+- **WebGL rendering** — all visuals drawn on a single `<canvas>` using WebGL (WebGL 2 / WebGL 1 fallback) across seven layers: animated gradient background (GLSL fragment shader), cell dividers, background shapes, looping glow overlays, instrument images (SVG rasterised to textures), sparkle particles, and expanding ring annuli; four colour themes cycle on each hit
 - **PWA** — includes a service worker and Web App Manifest for offline use and home-screen installation
 - **Responsive layout** — 2×3 grid in portrait, 3×2 in landscape
 
