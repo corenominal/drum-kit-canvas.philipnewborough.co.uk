@@ -1221,16 +1221,15 @@
             if (st.looping) {
                 var glowT  = (Math.sin(bgTime * Math.PI / 0.6) + 1) * 0.5;
                 var alpha  = 0.08 + 0.12 * glowT;
-                flatQuad(cell.x, cell.y, cell.x + cell.w, cell.y + cell.h,
-                         1, 1, 1, alpha);
+                flatQuad(cell.x, cell.y, cell.w, cell.h, 1, 1, 1, alpha);
 
                 var bAlpha = 0.25 + 0.35 * glowT;
                 var lw = 4;
                 // Border as four thin quads
-                flatQuad(cell.x + 2,          cell.y + 2,          cell.x + cell.w - 2, cell.y + 2 + lw,      1, 1, 1, bAlpha);
-                flatQuad(cell.x + 2,          cell.y + cell.h - 2 - lw, cell.x + cell.w - 2, cell.y + cell.h - 2, 1, 1, 1, bAlpha);
-                flatQuad(cell.x + 2,          cell.y + 2 + lw,     cell.x + 2 + lw,     cell.y + cell.h - 2 - lw, 1, 1, 1, bAlpha);
-                flatQuad(cell.x + cell.w - 2 - lw, cell.y + 2 + lw, cell.x + cell.w - 2, cell.y + cell.h - 2 - lw, 1, 1, 1, bAlpha);
+                flatQuad(cell.x + 2,               cell.y + 2,                    cell.w - 4,              lw,                       1, 1, 1, bAlpha);
+                flatQuad(cell.x + 2,               cell.y + cell.h - 2 - lw,      cell.w - 4,              lw,                       1, 1, 1, bAlpha);
+                flatQuad(cell.x + 2,               cell.y + 2 + lw,               lw,                      cell.h - 4 - 2 * lw,      1, 1, 1, bAlpha);
+                flatQuad(cell.x + cell.w - 2 - lw, cell.y + 2 + lw,               lw,                      cell.h - 4 - 2 * lw,      1, 1, 1, bAlpha);
             }
 
             var imgSize = Math.min(cell.w, cell.h) * 0.88;
