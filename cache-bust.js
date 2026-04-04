@@ -35,6 +35,13 @@ const TARGETS = [
     htmlNew: (h) => `js/main.js?v=${h}`,
     swNew:   (h) => `/js/main.js?v=${h}`,
   },
+  {
+    file:    join(__dirname, 'public', 'js', 'metrics.js'),
+    htmlRef: /js\/metrics\.js(?:\?v=[a-f0-9]+)?/,
+    swRef:   /\/js\/metrics\.js(?:\?v=[a-f0-9]+)?/,
+    htmlNew: (h) => `js/metrics.js?v=${h}`,
+    swNew:   (h) => `/js/metrics.js?v=${h}`,
+  },
 ];
 
 function shortHash(filePath) {
